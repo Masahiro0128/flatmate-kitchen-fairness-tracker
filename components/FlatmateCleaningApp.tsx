@@ -166,7 +166,7 @@ export default function FlatmateCleaningApp() {
     return "Noticeable imbalance. Ask high-point users to take more tasks or skip kitchen use more often.";
   }, [roommates]);
 
-  async function handleLogin(id: string): Promise<void> {
+  function handleLogin(id: string): void {
     setCurrentUserId(id);
     saveSession(id);
   }
@@ -304,21 +304,19 @@ export default function FlatmateCleaningApp() {
   }
 
   async function runWeeklyReset(): Promise<void> {
-    const updatedRoommates = roommates.map((r) => ({
-      id: r.id,
-      points: r.points + weeklyPoints,
-    }));
+    const results = await Promise.all(
+      roommates.map((r) =>
+        supabase
+          .from("roommates")
+          .update({ points: r.points + weeklyPoints })
+          .eq("id", r.id)
+      )
+    );
 
-    for (const roommate of updatedRoommates) {
-      const { error } = await supabase
-        .from("roommates")
-        .update({ points: roommate.points })
-        .eq("id", roommate.id);
-
-      if (error) {
-        setErrorMessage(error.message);
-        return;
-      }
+    const failed = results.find((r) => r.error);
+    if (failed?.error) {
+      setErrorMessage(failed.error.message);
+      return;
     }
 
     const insertReset = await supabase.from("weekly_resets").insert({
@@ -347,16 +345,19 @@ export default function FlatmateCleaningApp() {
     const targetWeek = weekHistory.find((week) => week.id === weekId);
     if (!targetWeek) return;
 
-    for (const roommate of roommates) {
-      const { error } = await supabase
-        .from("roommates")
-        .update({ points: roommate.points - targetWeek.added })
-        .eq("id", roommate.id);
+    const results = await Promise.all(
+      roommates.map((r) =>
+        supabase
+          .from("roommates")
+          .update({ points: r.points - targetWeek.added })
+          .eq("id", r.id)
+      )
+    );
 
-      if (error) {
-        setErrorMessage(error.message);
-        return;
-      }
+    const failed = results.find((r) => r.error);
+    if (failed?.error) {
+      setErrorMessage(failed.error.message);
+      return;
     }
 
     const deleteReset = await supabase.from("weekly_resets").delete().eq("id", weekId);
@@ -541,7 +542,7 @@ export default function FlatmateCleaningApp() {
                 Reset shared demo data
               </Button>
               <div className="rounded-xl bg-slate-100 p-3 text-sm text-slate-700">
-                Suggestion: run the weekly update every Sunday evening.
+                Points are added automatically every Sunday at midnight.
               </div>
             </CardContent>
           </Card>
