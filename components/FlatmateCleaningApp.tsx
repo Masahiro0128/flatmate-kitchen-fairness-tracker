@@ -16,7 +16,6 @@ import {
   LogIn,
   LogOut,
   CheckCircle2,
-  AlertTriangle,
 } from "lucide-react";
 
 const SESSION_KEY = "flatmate-cleaning-session-v1";
@@ -441,13 +440,6 @@ export default function FlatmateCleaningApp() {
                 Lower points are better. If someone keeps cooking but does not help clean,
                 their score stays high relative to others.
               </p>
-              <div className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-amber-900">
-                <AlertTriangle className="mt-0.5 h-4 w-4" />
-                <p>
-                  This version now uses shared online data. Everyone opening the same app
-                  sees the same logs and points.
-                </p>
-              </div>
             </CardContent>
           </Card>
 
