@@ -3,6 +3,10 @@
     {
       "path": "/api/weekly-reset",
       "schedule": "0 0 * * 1"
+    },
+    {
+      "path": "/api/push/send",
+      "schedule": "0 9 * * *"
     }
   ]
 }

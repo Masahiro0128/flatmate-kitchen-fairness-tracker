@@ -15,7 +15,11 @@ import {
   LogIn,
   LogOut,
   CheckCircle2,
+  Bell,
+  BellOff,
 } from "lucide-react";
+
+const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!;
 
 const SESSION_KEY = "flatmate-cleaning-session-v1";
 
@@ -92,6 +96,7 @@ export default function FlatmateCleaningApp() {
 
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string>("");
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
 
   const weeklyPoints = 21;
 
@@ -135,6 +140,9 @@ export default function FlatmateCleaningApp() {
     const savedSession = getSavedSession();
     if (savedSession) setCurrentUserId(savedSession);
     void loadAllData();
+    if ("Notification" in window) {
+      setNotifPermission(Notification.permission);
+    }
   }, []);
 
   const currentUser = useMemo<Roommate | null>(
@@ -168,6 +176,27 @@ export default function FlatmateCleaningApp() {
   function handleLogin(id: string): void {
     setCurrentUserId(id);
     saveSession(id);
+  }
+
+  async function enableNotifications(): Promise<void> {
+    if (!currentUser || !("serviceWorker" in navigator)) return;
+
+    const permission = await Notification.requestPermission();
+    setNotifPermission(permission);
+    if (permission !== "granted") return;
+
+    const reg = await navigator.serviceWorker.register("/sw.js");
+    const existing = await reg.pushManager.getSubscription();
+    const sub = existing ?? await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: VAPID_PUBLIC_KEY,
+    });
+
+    await fetch("/api/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ roommateId: currentUser.id, subscription: sub }),
+    });
   }
 
   function handleLogout(): void {
@@ -433,6 +462,21 @@ export default function FlatmateCleaningApp() {
                     <LogOut className="mr-2 h-4 w-4" />
                     Log out
                   </Button>
+                  {notifPermission !== "granted" ? (
+                    <Button
+                      variant="outline"
+                      className="rounded-xl"
+                      onClick={() => void enableNotifications()}
+                    >
+                      <Bell className="mr-2 h-4 w-4" />
+                      Enable daily reminder
+                    </Button>
+                  ) : (
+                    <div className="flex items-center gap-2 text-sm text-slate-500">
+                      <BellOff className="h-4 w-4" />
+                      Reminders on
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
