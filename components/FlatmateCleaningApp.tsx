@@ -1,56 +1,59 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
-import { Trash2, Plus, RotateCcw, LogIn, LogOut, CheckCircle2, AlertTriangle } from "lucide-react";
+import {
+  Trash2,
+  Plus,
+  RotateCcw,
+  LogIn,
+  LogOut,
+  CheckCircle2,
+  AlertTriangle,
+} from "lucide-react";
 
-const STORAGE_KEY = "flatmate-cleaning-mvp-v1";
 const SESSION_KEY = "flatmate-cleaning-session-v1";
 
-const DEFAULT_WEEKLY_POINTS = 12;
-const DEFAULT_TASKS = [
-  { id: "food", name: "Food waste", points: -3, category: "Waste" },
-  { id: "general", name: "General waste", points: -2, category: "Waste" },
-  { id: "bottle", name: "Bottle / glass waste", points: -2, category: "Waste" },
-  { id: "sink", name: "Clean the sink", points: -3, category: "Cleaning" },
-  { id: "ih", name: "Clean the IH surface", points: -2, category: "Cleaning" },
-  { id: "nokitchen", name: "Did not use kitchen today", points: -2, category: "Usage" },
-];
-
-const DEFAULT_STATE = {
-  flatName: "Mayflower Kitchen",
-  weeklyPoints: DEFAULT_WEEKLY_POINTS,
-  roommates: [
-    { id: crypto.randomUUID(), name: "Masahiro", points: 12 },
-    { id: crypto.randomUUID(), name: "Flatmate A", points: 12 },
-    { id: crypto.randomUUID(), name: "Flatmate B", points: 12 },
-  ],
-  tasks: DEFAULT_TASKS,
-  logs: [],
-  weekHistory: [],
+type Task = {
+  id: string;
+  name: string;
+  points: number;
+  category: string;
 };
 
-function loadState() {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : DEFAULT_STATE;
-  } catch {
-    return DEFAULT_STATE;
-  }
-}
+type Roommate = {
+  id: string;
+  name: string;
+  points: number;
+  created_at?: string;
+};
 
-function saveState(state) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
+type TaskLog = {
+  id: string;
+  roommate_id: string;
+  roommate_name: string;
+  task_ids: string[];
+  task_names: string[];
+  delta: number;
+  created_at: string;
+};
 
-function getSavedSession() {
+type WeekHistoryItem = {
+  id: string;
+  added: number;
+  created_at: string;
+};
+
+type TabKey = "tasks" | "admin" | "history";
+
+function getSavedSession(): string {
   try {
     return localStorage.getItem(SESSION_KEY) || "";
   } catch {
@@ -58,60 +61,103 @@ function getSavedSession() {
   }
 }
 
-function saveSession(roommateId) {
+function saveSession(roommateId: string): void {
   localStorage.setItem(SESSION_KEY, roommateId);
 }
 
-function clearSession() {
+function clearSession(): void {
   localStorage.removeItem(SESSION_KEY);
 }
 
-function fmtDate(ts) {
+function fmtDate(ts: string): string {
   return new Date(ts).toLocaleString();
 }
 
-function clamp(n, min, max) {
+function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
 export default function FlatmateCleaningApp() {
-  const [state, setState] = useState(DEFAULT_STATE);
-  const [currentUserId, setCurrentUserId] = useState("");
-  const [newRoommate, setNewRoommate] = useState("");
-  const [newTaskName, setNewTaskName] = useState("");
-  const [newTaskPoints, setNewTaskPoints] = useState(-2);
-  const [selectedTaskIds, setSelectedTaskIds] = useState([]);
+  const [mounted, setMounted] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabKey>("tasks");
+
+  const [roommates, setRoommates] = useState<Roommate[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [logs, setLogs] = useState<TaskLog[]>([]);
+  const [weekHistory, setWeekHistory] = useState<WeekHistoryItem[]>([]);
+
+  const [currentUserId, setCurrentUserId] = useState<string>("");
+  const [newRoommate, setNewRoommate] = useState<string>("");
+  const [newTaskName, setNewTaskName] = useState<string>("");
+  const [newTaskPoints, setNewTaskPoints] = useState<string>("-2");
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
+
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string>("");
+
+  const weeklyPoints = 21;
+
+  async function loadAllData(): Promise<void> {
+    setLoading(true);
+    setErrorMessage("");
+
+    const [
+      roommatesResult,
+      tasksResult,
+      logsResult,
+      weeklyResult,
+    ] = await Promise.all([
+      supabase.from("roommates").select("*").order("created_at", { ascending: true }),
+      supabase.from("tasks").select("*").order("name", { ascending: true }),
+      supabase.from("task_logs").select("*").order("created_at", { ascending: false }),
+      supabase.from("weekly_resets").select("*").order("created_at", { ascending: false }),
+    ]);
+
+    if (roommatesResult.error || tasksResult.error || logsResult.error || weeklyResult.error) {
+      setErrorMessage(
+        roommatesResult.error?.message ||
+          tasksResult.error?.message ||
+          logsResult.error?.message ||
+          weeklyResult.error?.message ||
+          "Failed to load data."
+      );
+      setLoading(false);
+      return;
+    }
+
+    setRoommates((roommatesResult.data || []) as Roommate[]);
+    setTasks((tasksResult.data || []) as Task[]);
+    setLogs((logsResult.data || []) as TaskLog[]);
+    setWeekHistory((weeklyResult.data || []) as WeekHistoryItem[]);
+    setLoading(false);
+  }
 
   useEffect(() => {
-    const loaded = loadState();
-    setState(loaded);
+    setMounted(true);
     const savedSession = getSavedSession();
     if (savedSession) setCurrentUserId(savedSession);
+    void loadAllData();
   }, []);
 
-  useEffect(() => {
-    saveState(state);
-  }, [state]);
-
-  const currentUser = useMemo(
-    () => state.roommates.find((r) => r.id === currentUserId) || null,
-    [state.roommates, currentUserId]
+  const currentUser = useMemo<Roommate | null>(
+    () => roommates.find((r) => r.id === currentUserId) || null,
+    [roommates, currentUserId]
   );
 
-  const totalNegativeTaskCost = useMemo(() => {
+  const totalNegativeTaskCost = useMemo<number>(() => {
     return Math.abs(
-      state.tasks
+      tasks
         .filter((task) => selectedTaskIds.includes(task.id))
         .reduce((sum, task) => sum + task.points, 0)
     );
-  }, [selectedTaskIds, state.tasks]);
+  }, [selectedTaskIds, tasks]);
 
-  const rankedRoommates = useMemo(() => {
-    return [...state.roommates].sort((a, b) => a.points - b.points);
-  }, [state.roommates]);
+  const rankedRoommates = useMemo<Roommate[]>(() => {
+    return [...roommates].sort((a, b) => a.points - b.points);
+  }, [roommates]);
 
-  const fairnessHint = useMemo(() => {
-    const pts = state.roommates.map((r) => r.points);
+  const fairnessHint = useMemo<string>(() => {
+    const pts = roommates.map((r) => r.points);
     if (pts.length === 0) return "";
     const max = Math.max(...pts);
     const min = Math.min(...pts);
@@ -119,115 +165,237 @@ export default function FlatmateCleaningApp() {
     if (gap <= 3) return "Very fair right now.";
     if (gap <= 7) return "Slight imbalance. Still manageable.";
     return "Noticeable imbalance. Ask high-point users to take more tasks or skip kitchen use more often.";
-  }, [state.roommates]);
+  }, [roommates]);
 
-  function updateState(updater) {
-    setState((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      saveState(next);
-      return next;
-    });
-  }
-
-  function handleLogin(id) {
+  async function handleLogin(id: string): Promise<void> {
     setCurrentUserId(id);
     saveSession(id);
   }
 
-  function handleLogout() {
+  function handleLogout(): void {
     setCurrentUserId("");
     clearSession();
   }
 
-  function addRoommate() {
+  async function addRoommate(): Promise<void> {
     const name = newRoommate.trim();
     if (!name) return;
-    updateState((prev) => ({
-      ...prev,
-      roommates: [
-        ...prev.roommates,
-        { id: crypto.randomUUID(), name, points: prev.weeklyPoints },
-      ],
-    }));
+
+    const { error } = await supabase.from("roommates").insert({
+      name,
+      points: weeklyPoints,
+    });
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
     setNewRoommate("");
+    await loadAllData();
   }
 
-  function removeRoommate(id) {
-    updateState((prev) => ({
-      ...prev,
-      roommates: prev.roommates.filter((r) => r.id !== id),
-      logs: prev.logs.filter((log) => log.roommateId !== id),
-    }));
+  async function removeRoommate(id: string): Promise<void> {
     if (currentUserId === id) handleLogout();
+
+    const { error } = await supabase.from("roommates").delete().eq("id", id);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    await loadAllData();
   }
 
-  function addCustomTask() {
+  async function addCustomTask(): Promise<void> {
     const name = newTaskName.trim();
     const points = Number(newTaskPoints);
+
     if (!name || Number.isNaN(points) || points >= 0) return;
-    updateState((prev) => ({
-      ...prev,
-      tasks: [
-        ...prev.tasks,
-        { id: crypto.randomUUID(), name, points, category: "Custom" },
-      ],
-    }));
+
+    const customId = `custom-${crypto.randomUUID()}`;
+
+    const { error } = await supabase.from("tasks").insert({
+      id: customId,
+      name,
+      points,
+      category: "Custom",
+    });
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
     setNewTaskName("");
-    setNewTaskPoints(-2);
+    setNewTaskPoints("-2");
+    await loadAllData();
   }
 
-  function toggleTask(taskId) {
+  function toggleTask(taskId: string): void {
     setSelectedTaskIds((prev) =>
-      prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]
+      prev.includes(taskId)
+        ? prev.filter((id) => id !== taskId)
+        : [...prev, taskId]
     );
   }
 
-  function submitTaskLog() {
+  async function submitTaskLog(): Promise<void> {
     if (!currentUser || selectedTaskIds.length === 0) return;
-    const chosenTasks = state.tasks.filter((t) => selectedTaskIds.includes(t.id));
+
+    const chosenTasks = tasks.filter((t) => selectedTaskIds.includes(t.id));
     const delta = chosenTasks.reduce((sum, t) => sum + t.points, 0);
-    const entry = {
-      id: crypto.randomUUID(),
-      roommateId: currentUser.id,
-      roommateName: currentUser.name,
-      taskIds: selectedTaskIds,
-      taskNames: chosenTasks.map((t) => t.name),
+    const newPoints = currentUser.points + delta;
+
+    const updateRoommate = await supabase
+      .from("roommates")
+      .update({ points: newPoints })
+      .eq("id", currentUser.id);
+
+    if (updateRoommate.error) {
+      setErrorMessage(updateRoommate.error.message);
+      return;
+    }
+
+    const insertLog = await supabase.from("task_logs").insert({
+      roommate_id: currentUser.id,
+      roommate_name: currentUser.name,
+      task_ids: selectedTaskIds,
+      task_names: chosenTasks.map((t) => t.name),
       delta,
-      createdAt: new Date().toISOString(),
-    };
+    });
 
-    updateState((prev) => ({
-      ...prev,
-      roommates: prev.roommates.map((r) =>
-        r.id === currentUser.id ? { ...r, points: r.points + delta } : r
-      ),
-      logs: [entry, ...prev.logs],
-    }));
+    if (insertLog.error) {
+      setErrorMessage(insertLog.error.message);
+      return;
+    }
+
     setSelectedTaskIds([]);
+    await loadAllData();
   }
 
-  function runWeeklyReset() {
-    updateState((prev) => ({
-      ...prev,
-      roommates: prev.roommates.map((r) => ({
-        ...r,
-        points: r.points + prev.weeklyPoints,
-      })),
-      weekHistory: [
-        {
-          id: crypto.randomUUID(),
-          added: prev.weeklyPoints,
-          createdAt: new Date().toISOString(),
-        },
-        ...prev.weekHistory,
-      ],
-    }));
+  async function deleteTaskLog(logId: string): Promise<void> {
+    const targetLog = logs.find((log) => log.id === logId);
+    if (!targetLog) return;
+
+    const targetRoommate = roommates.find((r) => r.id === targetLog.roommate_id);
+    if (!targetRoommate) return;
+
+    const revertedPoints = targetRoommate.points - targetLog.delta;
+
+    const updateRoommate = await supabase
+      .from("roommates")
+      .update({ points: revertedPoints })
+      .eq("id", targetRoommate.id);
+
+    if (updateRoommate.error) {
+      setErrorMessage(updateRoommate.error.message);
+      return;
+    }
+
+    const deleteLog = await supabase.from("task_logs").delete().eq("id", logId);
+
+    if (deleteLog.error) {
+      setErrorMessage(deleteLog.error.message);
+      return;
+    }
+
+    await loadAllData();
   }
 
-  function resetDemo() {
-    setState(DEFAULT_STATE);
-    saveState(DEFAULT_STATE);
+  async function runWeeklyReset(): Promise<void> {
+    const updatedRoommates = roommates.map((r) => ({
+      id: r.id,
+      points: r.points + weeklyPoints,
+    }));
+
+    for (const roommate of updatedRoommates) {
+      const { error } = await supabase
+        .from("roommates")
+        .update({ points: roommate.points })
+        .eq("id", roommate.id);
+
+      if (error) {
+        setErrorMessage(error.message);
+        return;
+      }
+    }
+
+    const insertReset = await supabase.from("weekly_resets").insert({
+      added: weeklyPoints,
+    });
+
+    if (insertReset.error) {
+      setErrorMessage(insertReset.error.message);
+      return;
+    }
+
+    await loadAllData();
+  }
+
+  async function deleteTask(taskId: string): Promise<void> {
+    const { error } = await supabase.from("tasks").delete().eq("id", taskId);
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+    setSelectedTaskIds((prev) => prev.filter((id) => id !== taskId));
+    await loadAllData();
+  }
+
+  async function deleteWeeklyReset(weekId: string): Promise<void> {
+    const targetWeek = weekHistory.find((week) => week.id === weekId);
+    if (!targetWeek) return;
+
+    for (const roommate of roommates) {
+      const { error } = await supabase
+        .from("roommates")
+        .update({ points: roommate.points - targetWeek.added })
+        .eq("id", roommate.id);
+
+      if (error) {
+        setErrorMessage(error.message);
+        return;
+      }
+    }
+
+    const deleteReset = await supabase.from("weekly_resets").delete().eq("id", weekId);
+
+    if (deleteReset.error) {
+      setErrorMessage(deleteReset.error.message);
+      return;
+    }
+
+    await loadAllData();
+  }
+
+  async function resetDemo(): Promise<void> {
+    setErrorMessage("");
+
+    await supabase.from("task_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    await supabase.from("weekly_resets").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    await supabase.from("roommates").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+
+    await supabase.from("roommates").insert([
+      { name: "Masahiro", points: 21 },
+      { name: "Flatmate A", points: 21 },
+      { name: "Flatmate B", points: 21 },
+    ]);
+
     setSelectedTaskIds([]);
+    setCurrentUserId("");
+    clearSession();
+    setActiveTab("tasks");
+    await loadAllData();
+  }
+
+  if (!mounted) {
+    return <div className="p-6 text-sm text-slate-500">Loading...</div>;
+  }
+
+  if (loading) {
+    return <div className="p-6 text-sm text-slate-500">Loading shared data...</div>;
   }
 
   return (
@@ -235,36 +403,49 @@ export default function FlatmateCleaningApp() {
       <div className="mx-auto max-w-6xl space-y-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Flatmate Kitchen Fairness Tracker</h1>
-            <p className="text-sm text-slate-600 mt-1">
-              A points-based cleaning rota where people who use the kitchen more are expected to offset it fairly.
+            <h1 className="text-3xl font-bold tracking-tight">
+              Flatmate Kitchen Fairness Tracker
+            </h1>
+            <p className="mt-1 text-sm text-slate-600">
+              A points-based cleaning rota where people who use the kitchen more
+              are expected to offset it fairly.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Badge variant="secondary">Weekly base: +{state.weeklyPoints} pts</Badge>
-            <Badge variant="outline">Shared on one link later</Badge>
+            <Badge variant="secondary">Weekly base: +{weeklyPoints} pts</Badge>
+            <Badge variant="outline">Shared live via Supabase</Badge>
           </div>
         </div>
 
+        {errorMessage && (
+          <div className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+            {errorMessage}
+          </div>
+        )}
+
         <div className="grid gap-6 lg:grid-cols-3">
-          <Card className="lg:col-span-2 rounded-2xl shadow-sm">
+          <Card className="rounded-2xl shadow-sm lg:col-span-2">
             <CardHeader>
               <CardTitle>How the system works</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-slate-700">
               <p>
-                Everyone receives <strong>+{state.weeklyPoints} points each week</strong>. Those points represent how much kitchen burden they still owe the flat.
+                Everyone receives <strong>+{weeklyPoints} points each week</strong>.
+                Those points represent how much kitchen burden they still owe the flat.
               </p>
               <p>
-                To bring points down, a roommate either <strong>does cleaning tasks</strong> or <strong>does not use the kitchen</strong> that day.
+                To bring points down, a roommate either <strong>does cleaning tasks</strong>{" "}
+                or <strong>does not use the kitchen</strong> that day.
               </p>
               <p>
-                Lower points are better. If someone keeps cooking but does not help clean, their score stays high relative to others.
+                Lower points are better. If someone keeps cooking but does not help clean,
+                their score stays high relative to others.
               </p>
               <div className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-amber-900">
                 <AlertTriangle className="mt-0.5 h-4 w-4" />
                 <p>
-                  This MVP stores data in the browser for demo purposes. For a real shareable app with persistent login across devices, the next step is a tiny backend with Supabase.
+                  This version now uses shared online data. Everyone opening the same app
+                  sees the same logs and points.
                 </p>
               </div>
             </CardContent>
@@ -277,16 +458,19 @@ export default function FlatmateCleaningApp() {
             <CardContent className="space-y-4">
               {!currentUser ? (
                 <div className="space-y-3">
-                  <p className="text-sm text-slate-600">Choose your name once. This browser keeps you logged in.</p>
+                  <p className="text-sm text-slate-600">
+                    Choose your name once. This browser keeps you logged in.
+                  </p>
                   <div className="grid gap-2">
-                    {state.roommates.map((roommate) => (
+                    {roommates.map((roommate) => (
                       <Button
                         key={roommate.id}
                         variant="outline"
                         className="justify-start rounded-xl"
-                        onClick={() => handleLogin(roommate.id)}
+                        onClick={() => void handleLogin(roommate.id)}
                       >
-                        <LogIn className="mr-2 h-4 w-4" /> {roommate.name}
+                        <LogIn className="mr-2 h-4 w-4" />
+                        {roommate.name}
                       </Button>
                     ))}
                   </div>
@@ -297,8 +481,13 @@ export default function FlatmateCleaningApp() {
                     <p className="text-sm text-slate-500">Logged in as</p>
                     <p className="text-xl font-semibold">{currentUser.name}</p>
                   </div>
-                  <Button variant="outline" className="rounded-xl" onClick={handleLogout}>
-                    <LogOut className="mr-2 h-4 w-4" /> Log out
+                  <Button
+                    variant="outline"
+                    className="rounded-xl"
+                    onClick={handleLogout}
+                  >
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Log out
                   </Button>
                 </div>
               )}
@@ -307,7 +496,7 @@ export default function FlatmateCleaningApp() {
         </div>
 
         <div className="grid gap-6 lg:grid-cols-3">
-          <Card className="lg:col-span-2 rounded-2xl shadow-sm">
+          <Card className="rounded-2xl shadow-sm lg:col-span-2">
             <CardHeader>
               <CardTitle>Fairness board</CardTitle>
             </CardHeader>
@@ -315,8 +504,13 @@ export default function FlatmateCleaningApp() {
               <p className="text-sm text-slate-600">{fairnessHint}</p>
               <div className="space-y-3">
                 {rankedRoommates.map((r, index) => {
-                  const maxPts = Math.max(state.weeklyPoints * 2, ...state.roommates.map((x) => x.points), 1);
+                  const maxPts = Math.max(
+                    weeklyPoints * 2,
+                    ...roommates.map((x) => x.points),
+                    1
+                  );
                   const progressValue = clamp((r.points / maxPts) * 100, 0, 100);
+
                   return (
                     <div key={r.id} className="rounded-xl border bg-white p-4">
                       <div className="mb-2 flex items-center justify-between">
@@ -343,11 +537,16 @@ export default function FlatmateCleaningApp() {
               <CardTitle>Weekly actions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <Button className="w-full rounded-xl" onClick={runWeeklyReset}>
-                <RotateCcw className="mr-2 h-4 w-4" /> Add weekly points to everyone
+              <Button className="w-full rounded-xl" onClick={() => void runWeeklyReset()}>
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Add weekly points to everyone
               </Button>
-              <Button variant="outline" className="w-full rounded-xl" onClick={resetDemo}>
-                Reset demo data
+              <Button
+                variant="outline"
+                className="w-full rounded-xl"
+                onClick={() => void resetDemo()}
+              >
+                Reset shared demo data
               </Button>
               <div className="rounded-xl bg-slate-100 p-3 text-sm text-slate-700">
                 Suggestion: run the weekly update every Sunday evening.
@@ -356,16 +555,46 @@ export default function FlatmateCleaningApp() {
           </Card>
         </div>
 
-        <Tabs defaultValue="tasks" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-3 rounded-2xl">
-            <TabsTrigger value="tasks">Log tasks</TabsTrigger>
-            <TabsTrigger value="admin">Settings</TabsTrigger>
-            <TabsTrigger value="history">History</TabsTrigger>
-          </TabsList>
+        <div className="space-y-4">
+          <div className="grid w-full grid-cols-3 rounded-2xl bg-muted p-1">
+            <button
+              type="button"
+              onClick={() => setActiveTab("tasks")}
+              className={`rounded-xl px-3 py-2 text-sm font-medium transition ${
+                activeTab === "tasks"
+                  ? "bg-white text-black shadow-sm"
+                  : "text-slate-600"
+              }`}
+            >
+              Log tasks
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("admin")}
+              className={`rounded-xl px-3 py-2 text-sm font-medium transition ${
+                activeTab === "admin"
+                  ? "bg-white text-black shadow-sm"
+                  : "text-slate-600"
+              }`}
+            >
+              Settings
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("history")}
+              className={`rounded-xl px-3 py-2 text-sm font-medium transition ${
+                activeTab === "history"
+                  ? "bg-white text-black shadow-sm"
+                  : "text-slate-600"
+              }`}
+            >
+              History
+            </button>
+          </div>
 
-          <TabsContent value="tasks">
+          {activeTab === "tasks" && (
             <div className="grid gap-6 lg:grid-cols-3">
-              <Card className="lg:col-span-2 rounded-2xl shadow-sm">
+              <Card className="rounded-2xl shadow-sm lg:col-span-2">
                 <CardHeader>
                   <CardTitle>Choose what you did today</CardTitle>
                 </CardHeader>
@@ -377,7 +606,7 @@ export default function FlatmateCleaningApp() {
                   ) : (
                     <>
                       <div className="grid gap-3 md:grid-cols-2">
-                        {state.tasks.map((task) => (
+                        {tasks.map((task) => (
                           <label
                             key={task.id}
                             className="flex cursor-pointer items-start gap-3 rounded-xl border bg-white p-4"
@@ -391,19 +620,28 @@ export default function FlatmateCleaningApp() {
                                 <span className="font-medium">{task.name}</span>
                                 <Badge variant="secondary">{task.points} pts</Badge>
                               </div>
-                              <div className="text-xs text-slate-500 mt-1">{task.category}</div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {task.category}
+                              </div>
                             </div>
                           </label>
                         ))}
                       </div>
+
                       <div className="rounded-xl bg-emerald-50 p-4 text-emerald-900">
                         <div className="flex items-center justify-between">
-                          <span className="font-medium">This submission will reduce your score by</span>
-                          <span className="text-xl font-bold">{totalNegativeTaskCost}</span>
+                          <span className="font-medium">
+                            This submission will reduce your score by
+                          </span>
+                          <span className="text-xl font-bold">
+                            {totalNegativeTaskCost}
+                          </span>
                         </div>
                       </div>
-                      <Button className="rounded-xl" onClick={submitTaskLog}>
-                        <CheckCircle2 className="mr-2 h-4 w-4" /> Submit today’s actions
+
+                      <Button className="rounded-xl" onClick={() => void submitTaskLog()}>
+                        <CheckCircle2 className="mr-2 h-4 w-4" />
+                        Submit today’s actions
                       </Button>
                     </>
                   )}
@@ -415,22 +653,23 @@ export default function FlatmateCleaningApp() {
                   <CardTitle>Recommended point model</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm text-slate-700">
-                  <p><strong>Start / weekly top-up:</strong> +12 points</p>
-                  <p><strong>Did not use kitchen today:</strong> -2</p>
-                  <p><strong>Food waste:</strong> -3</p>
-                  <p><strong>General waste:</strong> -2</p>
-                  <p><strong>Bottle / glass waste:</strong> -2</p>
+                  <p><strong>Start / weekly top-up:</strong> +21 points</p>
+                  <p><strong>Did not use kitchen today:</strong> -3</p>
+                  <p><strong>Food waste:</strong> -5</p>
+                  <p><strong>General waste:</strong> -4</p>
+                  <p><strong>Bottle / glass waste:</strong> -4</p>
                   <p><strong>Clean sink:</strong> -3</p>
                   <p><strong>Clean IH surface:</strong> -2</p>
                   <div className="rounded-xl bg-slate-100 p-3">
-                    Logic: a normal active cook can get back to near zero by doing a few small tasks plus one bigger cleaning task each week.
+                    Logic: +21 per week matches 7 days × 3 points. If someone does
+                    not use the kitchen for all 7 days, their weekly net change is 0.
                   </div>
                 </CardContent>
               </Card>
             </div>
-          </TabsContent>
+          )}
 
-          <TabsContent value="admin">
+          {activeTab === "admin" && (
             <div className="grid gap-6 lg:grid-cols-2">
               <Card className="rounded-2xl shadow-sm">
                 <CardHeader>
@@ -444,18 +683,29 @@ export default function FlatmateCleaningApp() {
                       placeholder="New roommate name"
                       className="rounded-xl"
                     />
-                    <Button onClick={addRoommate} className="rounded-xl">
-                      <Plus className="mr-2 h-4 w-4" /> Add
+                    <Button onClick={() => void addRoommate()} className="rounded-xl">
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add
                     </Button>
                   </div>
+
                   <div className="space-y-2">
-                    {state.roommates.map((r) => (
-                      <div key={r.id} className="flex items-center justify-between rounded-xl border p-3">
+                    {roommates.map((r) => (
+                      <div
+                        key={r.id}
+                        className="flex items-center justify-between rounded-xl border p-3"
+                      >
                         <div>
                           <div className="font-medium">{r.name}</div>
-                          <div className="text-xs text-slate-500">Current points: {r.points}</div>
+                          <div className="text-xs text-slate-500">
+                            Current points: {r.points}
+                          </div>
                         </div>
-                        <Button variant="ghost" size="icon" onClick={() => removeRoommate(r.id)}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => void removeRoommate(r.id)}
+                        >
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
@@ -478,6 +728,7 @@ export default function FlatmateCleaningApp() {
                       className="rounded-xl"
                     />
                   </div>
+
                   <div className="space-y-2">
                     <Label>Point value (negative)</Label>
                     <Input
@@ -487,30 +738,84 @@ export default function FlatmateCleaningApp() {
                       className="rounded-xl"
                     />
                   </div>
-                  <Button onClick={addCustomTask} className="rounded-xl">Add task</Button>
+
+                  <Button onClick={() => void addCustomTask()} className="rounded-xl">
+                    Add task
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card className="rounded-2xl shadow-sm lg:col-span-2">
+                <CardHeader>
+                  <CardTitle>Manage tasks</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {tasks.map((task) => (
+                    <div
+                      key={task.id}
+                      className="flex items-center justify-between rounded-xl border p-3"
+                    >
+                      <div>
+                        <div className="font-medium">{task.name}</div>
+                        <div className="text-xs text-slate-500">
+                          {task.category} · {task.points} pts
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => void deleteTask(task.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
                 </CardContent>
               </Card>
             </div>
-          </TabsContent>
+          )}
 
-          <TabsContent value="history">
+          {activeTab === "history" && (
             <div className="grid gap-6 lg:grid-cols-2">
               <Card className="rounded-2xl shadow-sm">
                 <CardHeader>
                   <CardTitle>Task log</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {state.logs.length === 0 ? (
+                  {logs.length === 0 ? (
                     <p className="text-sm text-slate-500">No task logs yet.</p>
                   ) : (
-                    state.logs.map((log) => (
-                      <div key={log.id} className="rounded-xl border p-4">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="font-medium">{log.roommateName}</div>
-                          <Badge variant="secondary">{log.delta} pts</Badge>
+                    logs.map((log) => (
+                      <div key={log.id} className="rounded-2xl border bg-white p-4 shadow-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-base font-semibold">{log.roommate_name}</div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {fmtDate(log.created_at)}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <Badge variant="secondary" className="text-sm">
+                              {log.delta} pts
+                            </Badge>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void deleteTaskLog(log.id)}
+                            >
+                              Delete
+                            </Button>
+                          </div>
                         </div>
-                        <div className="mt-2 text-sm text-slate-700">{log.taskNames.join(", ")}</div>
-                        <div className="mt-1 text-xs text-slate-500">{fmtDate(log.createdAt)}</div>
+
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {log.task_names.map((taskName, index) => (
+                            <Badge key={`${log.id}-${index}`} variant="outline">
+                              {taskName}
+                            </Badge>
+                          ))}
+                        </div>
                       </div>
                     ))
                   )}
@@ -522,21 +827,37 @@ export default function FlatmateCleaningApp() {
                   <CardTitle>Weekly reset history</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {state.weekHistory.length === 0 ? (
+                  {weekHistory.length === 0 ? (
                     <p className="text-sm text-slate-500">No weekly resets yet.</p>
                   ) : (
-                    state.weekHistory.map((week) => (
-                      <div key={week.id} className="rounded-xl border p-4">
-                        <div className="font-medium">Added +{week.added} points to everyone</div>
-                        <div className="text-xs text-slate-500 mt-1">{fmtDate(week.createdAt)}</div>
+                    weekHistory.map((week) => (
+                      <div key={week.id} className="rounded-2xl border bg-white p-4 shadow-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="font-semibold">
+                              Added +{week.added} points to everyone
+                            </div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {fmtDate(week.created_at)}
+                            </div>
+                          </div>
+
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void deleteWeeklyReset(week.id)}
+                          >
+                            Delete
+                          </Button>
+                        </div>
                       </div>
                     ))
                   )}
                 </CardContent>
               </Card>
             </div>
-          </TabsContent>
-        </Tabs>
+          )}
+        </div>
       </div>
     </div>
   );
