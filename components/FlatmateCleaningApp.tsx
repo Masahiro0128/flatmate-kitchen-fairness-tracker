@@ -12,7 +12,6 @@ import { Progress } from "@/components/ui/progress";
 import {
   Trash2,
   Plus,
-  RotateCcw,
   LogIn,
   LogOut,
   CheckCircle2,
@@ -303,34 +302,6 @@ export default function FlatmateCleaningApp() {
     await loadAllData();
   }
 
-  async function runWeeklyReset(): Promise<void> {
-    const results = await Promise.all(
-      roommates.map((r) =>
-        supabase
-          .from("roommates")
-          .update({ points: r.points + weeklyPoints })
-          .eq("id", r.id)
-      )
-    );
-
-    const failed = results.find((r) => r.error);
-    if (failed?.error) {
-      setErrorMessage(failed.error.message);
-      return;
-    }
-
-    const insertReset = await supabase.from("weekly_resets").insert({
-      added: weeklyPoints,
-    });
-
-    if (insertReset.error) {
-      setErrorMessage(insertReset.error.message);
-      return;
-    }
-
-    await loadAllData();
-  }
-
   async function deleteTask(taskId: string): Promise<void> {
     const { error } = await supabase.from("tasks").delete().eq("id", taskId);
     if (error) {
@@ -367,26 +338,6 @@ export default function FlatmateCleaningApp() {
       return;
     }
 
-    await loadAllData();
-  }
-
-  async function resetDemo(): Promise<void> {
-    setErrorMessage("");
-
-    await supabase.from("task_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("weekly_resets").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-    await supabase.from("roommates").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-
-    await supabase.from("roommates").insert([
-      { name: "Masahiro", points: 21 },
-      { name: "Flatmate A", points: 21 },
-      { name: "Flatmate B", points: 21 },
-    ]);
-
-    setSelectedTaskIds([]);
-    setCurrentUserId("");
-    clearSession();
-    setActiveTab("tasks");
     await loadAllData();
   }
 
@@ -529,18 +480,7 @@ export default function FlatmateCleaningApp() {
             <CardHeader>
               <CardTitle>Weekly actions</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <Button className="w-full rounded-xl" onClick={() => void runWeeklyReset()}>
-                <RotateCcw className="mr-2 h-4 w-4" />
-                Add weekly points to everyone
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full rounded-xl"
-                onClick={() => void resetDemo()}
-              >
-                Reset shared demo data
-              </Button>
+            <CardContent>
               <div className="rounded-xl bg-slate-100 p-3 text-sm text-slate-700">
                 Points are added automatically every Sunday at midnight.
               </div>
